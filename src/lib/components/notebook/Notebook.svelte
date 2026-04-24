@@ -149,6 +149,17 @@
 		return !!el.closest('button, a, input, textarea, [data-no-flip]');
 	}
 
+	// Used by the page-actions row (and any other interactive island) to make
+	// sure pointer/click events do NOT bubble up to the page-level flip
+	// handlers. Relying on isInteractive() alone is fragile because event
+	// retargeting (text nodes, disabled state, slight pointer drift between
+	// pointerdown and pointerup) can let the page handler win the race
+	// against the button's click. Stopping propagation at the source is
+	// bulletproof.
+	function stopAll(e: Event) {
+		e.stopPropagation();
+	}
+
 	function onPageDown(e: PointerEvent) {
 		if (e.button !== 0) return;
 		downX = e.clientX;
@@ -261,7 +272,7 @@
 							</div>
 						</div>
 
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 						<div
 							class="page-actions"
 							data-no-flip
