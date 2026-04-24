@@ -27,6 +27,14 @@ excerpt: "..." # optional
 Body text...
 ```
 
-## Goal (next)
+## Admin (simple CMS)
 
-- Add a small password-protected `/admin` editor that writes markdown files and commits to git (no external DB).
+- `/admin` login (password)
+- `/admin/editor` basic editor
+
+Set env var:
+
+- `SEOLYONG_ADMIN_PASSWORD=...`
+
+Note: on Vercel, writing files at runtime is ephemeral. Next step is GitHub commits from the server (or manual edits + redeploy).
+
