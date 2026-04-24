@@ -2,6 +2,7 @@
 	type Post = {
 		slug: string;
 		frontmatter: { title: string; date: string; excerpt?: string };
+		content: string;
 	};
 
 	let { posts }: { posts: Post[] } = $props();
@@ -13,7 +14,6 @@
 	let flipFromPost = $state<Post | null>(null);
 
 	const FLIP_MS = 760;
-	const OPEN_MS = 1150;
 
 	function open() {
 		if (opened) return;
@@ -51,9 +51,21 @@
 
 	const active = $derived(posts[activeIndex]);
 
+	function paragraphs(raw: string): string[] {
+		if (!raw) return [];
+		return raw
+			.split(/\n\s*\n/)
+			.map((p) => p.trim())
+			.filter(Boolean);
+	}
+
+	const activeParagraphs = $derived(active ? paragraphs(active.content) : []);
+	const flipFromParagraphs = $derived(flipFromPost ? paragraphs(flipFromPost.content) : []);
+
 	function fmt(d: string) {
 		if (!d) return '';
-		const dt = new Date(d);
+		const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d);
+		const dt = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(d);
 		if (Number.isNaN(dt.getTime())) return d;
 		return dt.toLocaleDateString('en-US', {
 			month: 'long',
@@ -62,11 +74,59 @@
 		});
 	}
 
+	const activeDate = $derived(active ? fmt(active.frontmatter.date) : '');
+	const activeSubtitle = $derived(
+		active && active.frontmatter.title && active.frontmatter.title !== activeDate
+			? active.frontmatter.title
+			: ''
+	);
+	const flipFromDate = $derived(flipFromPost ? fmt(flipFromPost.frontmatter.date) : '');
+	const flipFromSubtitle = $derived(
+		flipFromPost &&
+			flipFromPost.frontmatter.title &&
+			flipFromPost.frontmatter.title !== flipFromDate
+			? flipFromPost.frontmatter.title
+			: ''
+	);
+
 	function onCoverKey(e: KeyboardEvent) {
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
 			open();
 		}
+	}
+
+	// Click-to-flip: left half of page → prev, right half → next.
+	let downX = 0;
+	let downY = 0;
+	let downTarget: EventTarget | null = null;
+
+	function isInteractive(el: EventTarget | null): boolean {
+		if (!(el instanceof Element)) return false;
+		return !!el.closest('button, a, input, textarea, [data-no-flip]');
+	}
+
+	function onPageDown(e: PointerEvent) {
+		if (e.button !== 0) return;
+		downX = e.clientX;
+		downY = e.clientY;
+		downTarget = e.target;
+	}
+
+	function onPageUp(e: PointerEvent) {
+		if (e.button !== 0) return;
+		if (!opened || flipping !== 'none') return;
+		if (isInteractive(downTarget) || isInteractive(e.target)) return;
+		const dx = Math.abs(e.clientX - downX);
+		const dy = Math.abs(e.clientY - downY);
+		if (dx > 6 || dy > 6) return;
+		const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+		if (sel && sel.toString().length > 0) return;
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const x = e.clientX - rect.left;
+		const isLeft = x < rect.width / 2;
+		if (isLeft) flipPrev();
+		else flipNext();
 	}
 </script>
 
@@ -79,26 +139,36 @@
 
 	<div class="book-perspective">
 		<div class="book" class:opened class:flipping-active={flipping !== 'none'}>
-			<!-- Back cover (depth) -->
 			<div class="back-cover"></div>
 
-			<!-- Page edge (paper thickness) -->
 			<div class="page-edge"></div>
 
-			<!-- The active page sitting inside the notebook -->
-			<div class="page" class:visible={opened}>
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				class="page"
+				class:visible={opened}
+				class:hoverable={opened}
+				onpointerdown={onPageDown}
+				onpointerup={onPageUp}
+			>
 				{#if active}
 					<div class="page-content" data-key={activeIndex}>
 						<div class="ribbon"></div>
 						<div class="meta">
-							<span class="date">{fmt(active.frontmatter.date)}</span>
 							<span class="pageno">No. {String(activeIndex + 1).padStart(2, '0')}</span>
+							{#if activeSubtitle}
+								<span class="subtitle">{activeSubtitle}</span>
+							{/if}
 						</div>
-						<h1>{active.frontmatter.title}</h1>
-						{#if active.frontmatter.excerpt}
-							<p class="excerpt">{active.frontmatter.excerpt}</p>
-						{/if}
-						<a class="read" href={`/post/${active.slug}`}>read this entry →</a>
+						<h1>{activeDate}</h1>
+
+						<div class="scroll">
+							<div class="body">
+								{#each activeParagraphs as para}
+									<p>{para}</p>
+								{/each}
+							</div>
+						</div>
 
 						<div class="page-actions">
 							<button
@@ -106,6 +176,7 @@
 								class="nav"
 								onclick={flipPrev}
 								disabled={activeIndex === 0 || flipping !== 'none'}
+								aria-label="previous entry"
 							>
 								← prev
 							</button>
@@ -115,35 +186,47 @@
 								class="nav"
 								onclick={flipNext}
 								disabled={activeIndex === posts.length - 1 || flipping !== 'none'}
+								aria-label="next entry"
 							>
 								next →
 							</button>
 						</div>
+
+						{#if opened && activeIndex > 0}
+							<div class="flip-hint left" aria-hidden="true">‹</div>
+						{/if}
+						{#if opened && activeIndex < posts.length - 1}
+							<div class="flip-hint right" aria-hidden="true">›</div>
+						{/if}
 					</div>
 				{/if}
 			</div>
 
-			<!-- Flipping page overlay (renders the OLD content rotating away) -->
 			{#if flipFromPost}
 				<div class="flipping-page" class:next={flipping === 'next'} class:prev={flipping === 'prev'}>
 					<div class="flip-side front">
 						<div class="page-content">
 							<div class="ribbon"></div>
 							<div class="meta">
-								<span class="date">{fmt(flipFromPost.frontmatter.date)}</span>
 								<span class="pageno">No. {String(flipFromIndex + 1).padStart(2, '0')}</span>
+								{#if flipFromSubtitle}
+									<span class="subtitle">{flipFromSubtitle}</span>
+								{/if}
 							</div>
-							<h1>{flipFromPost.frontmatter.title}</h1>
-							{#if flipFromPost.frontmatter.excerpt}
-								<p class="excerpt">{flipFromPost.frontmatter.excerpt}</p>
-							{/if}
+							<h1>{flipFromDate}</h1>
+							<div class="scroll no-scroll">
+								<div class="body">
+									{#each flipFromParagraphs as para}
+										<p>{para}</p>
+									{/each}
+								</div>
+							</div>
 						</div>
 					</div>
 					<div class="flip-side back"></div>
 				</div>
 			{/if}
 
-			<!-- Front cover (rotates open) -->
 			<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 			<div
 				class="cover"
@@ -159,7 +242,7 @@
 						<div class="ornament">— ✦ —</div>
 						<div class="cover-title-block">
 							<div class="cover-title">seolyong</div>
-							<div class="cover-sub">a soft notebook</div>
+							<div class="cover-sub">매일 묵상 · daily devotions</div>
 						</div>
 						<div class="ornament">— ✿ —</div>
 					</div>
@@ -210,7 +293,6 @@
 		font-family: 'Cormorant Garamond', ui-serif, Georgia, 'Times New Roman', serif;
 	}
 
-	/* ambient drifting petals */
 	.petals {
 		position: absolute;
 		inset: 0;
@@ -256,9 +338,8 @@
 		perspective-origin: 50% 38%;
 	}
 
-	/* the book itself — single-page width (portrait notebook) */
 	.book {
-		--w: clamp(280px, 32vw, 420px);
+		--w: clamp(320px, 36vw, 460px);
 		--h: calc(var(--w) * 1.36);
 		--depth: 22px;
 		position: relative;
@@ -283,20 +364,17 @@
 		50% { transform: rotateX(8deg) rotateY(-14deg) translateY(-7px); }
 	}
 
-	/* back cover — gives a sense of book depth */
 	.back-cover {
 		position: absolute;
 		inset: 0;
 		transform: translateZ(calc(var(--depth) * -1));
-		background:
-			linear-gradient(135deg, var(--rose-2) 0%, var(--rose-deep) 100%);
+		background: linear-gradient(135deg, var(--rose-2) 0%, var(--rose-deep) 100%);
 		border-radius: 6px 8px 8px 6px;
 		box-shadow:
 			0 36px 80px -18px rgba(168, 90, 118, 0.55),
 			0 14px 30px rgba(168, 90, 118, 0.28);
 	}
 
-	/* paper-thickness edge on the right side */
 	.page-edge {
 		position: absolute;
 		top: 6px;
@@ -304,19 +382,17 @@
 		right: -2px;
 		width: 6px;
 		transform: translateZ(calc(var(--depth) * -0.5));
-		background:
-			repeating-linear-gradient(
-				180deg,
-				#fffafc 0px,
-				#fffafc 1px,
-				#f3d9e3 1px,
-				#f3d9e3 2px
-			);
+		background: repeating-linear-gradient(
+			180deg,
+			#fffafc 0px,
+			#fffafc 1px,
+			#f3d9e3 1px,
+			#f3d9e3 2px
+		);
 		border-radius: 0 4px 4px 0;
 		box-shadow: inset -1px 0 0 rgba(168, 90, 118, 0.2);
 	}
 
-	/* the page content sits inside the book */
 	.page {
 		position: absolute;
 		inset: 0;
@@ -329,17 +405,20 @@
 			inset 8px 0 16px -8px rgba(168, 90, 118, 0.25);
 		opacity: 0;
 		transition: opacity 0.5s ease 0.55s;
+		overflow: hidden;
 	}
 	.page.visible { opacity: 1; }
+	.page.hoverable { cursor: pointer; }
 
 	.page-content {
 		position: relative;
 		height: 100%;
-		padding: clamp(22px, 3.4vw, 38px);
+		padding: clamp(20px, 3vw, 32px);
 		color: var(--ink);
 		box-sizing: border-box;
-		display: flex;
-		flex-direction: column;
+		display: grid;
+		grid-template-rows: auto auto 1fr auto;
+		gap: 12px;
 		animation: pageFadeIn 0.55s cubic-bezier(0.5, 0.05, 0.2, 1) both;
 	}
 	@keyframes pageFadeIn {
@@ -350,12 +429,13 @@
 	.ribbon {
 		position: absolute;
 		top: -8px;
-		right: 28px;
-		width: 14px;
-		height: 78px;
+		right: 26px;
+		width: 13px;
+		height: 70px;
 		background: linear-gradient(180deg, var(--gold) 0%, #b78240 100%);
-		border-radius: 0 0 7px 7px;
+		border-radius: 0 0 6px 6px;
 		box-shadow: 0 4px 6px rgba(91, 34, 56, 0.22);
+		z-index: 2;
 	}
 	.ribbon::after {
 		content: '';
@@ -372,61 +452,70 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: baseline;
+		gap: 14px;
 		color: var(--ink-soft);
 		font-size: 11px;
 		letter-spacing: 0.22em;
 		text-transform: lowercase;
 		font-family: ui-serif, Georgia, serif;
 		font-style: italic;
-		margin-bottom: 16px;
+		padding-bottom: 8px;
 		border-bottom: 1px solid rgba(168, 90, 118, 0.22);
-		padding-bottom: 10px;
+	}
+	.subtitle {
+		text-align: right;
+		letter-spacing: 0.08em;
+		text-transform: none;
 	}
 
 	h1 {
 		font-family: 'Cormorant Garamond', ui-serif, Georgia, serif;
 		font-weight: 500;
-		font-size: clamp(24px, 2.8vw, 36px);
+		font-size: clamp(22px, 2.4vw, 30px);
 		line-height: 1.18;
-		margin: 0 0 14px;
+		margin: 0;
 		color: var(--ink);
 		letter-spacing: -0.005em;
 	}
 
-	.excerpt {
-		font-size: clamp(14px, 1.15vw, 17px);
-		line-height: 1.65;
-		color: var(--ink);
-		opacity: 0.92;
-		margin: 0 0 22px;
-		font-style: italic;
-		font-family: ui-serif, Georgia, serif;
+	.scroll {
+		min-height: 0;
+		overflow-y: auto;
+		overflow-x: hidden;
+		padding-right: 8px;
+		scrollbar-width: thin;
+		scrollbar-color: rgba(168, 90, 118, 0.4) transparent;
+	}
+	.scroll.no-scroll { overflow: hidden; }
+	.scroll::-webkit-scrollbar { width: 6px; }
+	.scroll::-webkit-scrollbar-track { background: transparent; }
+	.scroll::-webkit-scrollbar-thumb {
+		background: rgba(168, 90, 118, 0.35);
+		border-radius: 3px;
+	}
+	.scroll::-webkit-scrollbar-thumb:hover {
+		background: rgba(168, 90, 118, 0.55);
 	}
 
-	.read {
-		display: inline-block;
-		color: var(--rose-shadow);
-		text-decoration: none;
-		border-bottom: 1px solid rgba(168, 90, 118, 0.4);
-		padding-bottom: 2px;
-		font-style: italic;
-		font-family: ui-serif, Georgia, serif;
-		font-size: 14px;
-		transition: color 0.2s, border-color 0.2s, transform 0.2s;
-		align-self: flex-start;
-	}
-	.read:hover {
+	.body {
+		font-family: ui-serif, Georgia, 'Times New Roman', serif;
 		color: var(--ink);
-		border-color: var(--ink);
-		transform: translateX(2px);
+		font-size: clamp(13px, 1vw, 15px);
+		line-height: 1.75;
+		white-space: pre-wrap;
+	}
+	.body p {
+		margin: 0 0 14px;
+	}
+	.body p:last-child {
+		margin-bottom: 0;
 	}
 
 	.page-actions {
-		margin-top: auto;
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding-top: 18px;
+		padding-top: 10px;
 		border-top: 1px dashed rgba(168, 90, 118, 0.25);
 	}
 	.nav, .close {
@@ -449,7 +538,31 @@
 	}
 	.nav:disabled { opacity: 0.3; cursor: default; }
 
-	/* flipping page overlay */
+	/* Hover chevron hints — fade in when hovering page, indicating click-to-flip */
+	.flip-hint {
+		position: absolute;
+		top: 50%;
+		font-family: ui-serif, Georgia, serif;
+		font-size: 36px;
+		color: var(--rose-deep);
+		opacity: 0;
+		transform: translateY(-50%) translateX(0);
+		transition: opacity 0.35s ease, transform 0.35s ease;
+		pointer-events: none;
+		z-index: 4;
+		text-shadow: 0 1px 2px rgba(255, 255, 255, 0.6);
+	}
+	.flip-hint.left { left: 8px; }
+	.flip-hint.right { right: 8px; }
+	.page.hoverable:hover .flip-hint.left {
+		opacity: 0.4;
+		transform: translateY(-50%) translateX(-3px);
+	}
+	.page.hoverable:hover .flip-hint.right {
+		opacity: 0.4;
+		transform: translateY(-50%) translateX(3px);
+	}
+
 	.flipping-page {
 		position: absolute;
 		inset: 0;
@@ -492,13 +605,10 @@
 	}
 	.flip-side.back {
 		transform: rotateY(180deg);
-		background:
-			linear-gradient(180deg, var(--cream-edge) 0%, var(--cream) 100%);
-		box-shadow:
-			inset 0 0 60px rgba(202, 122, 147, 0.12);
+		background: linear-gradient(180deg, var(--cream-edge) 0%, var(--cream) 100%);
+		box-shadow: inset 0 0 60px rgba(202, 122, 147, 0.12);
 	}
 
-	/* ===== Front Cover ===== */
 	.cover {
 		position: absolute;
 		top: 0;
@@ -515,6 +625,7 @@
 	.cover.opened {
 		transform: rotateY(-172deg);
 		cursor: default;
+		pointer-events: none;
 	}
 
 	.cover-face {
@@ -541,8 +652,7 @@
 
 	.cover-face.back {
 		transform: rotateY(180deg);
-		background:
-			linear-gradient(180deg, #fadce6 0%, #f4c2d2 100%);
+		background: linear-gradient(180deg, #fadce6 0%, #f4c2d2 100%);
 		box-shadow: inset 0 0 60px rgba(168, 90, 118, 0.28);
 		display: grid;
 		place-items: center;
@@ -600,7 +710,7 @@
 	.cover-sub {
 		font-style: italic;
 		opacity: 0.92;
-		letter-spacing: 0.2em;
+		letter-spacing: 0.16em;
 		font-size: 12px;
 		text-transform: lowercase;
 		font-family: ui-serif, Georgia, serif;
@@ -612,8 +722,7 @@
 		bottom: -10px;
 		right: 16%;
 		width: 7px;
-		background:
-			linear-gradient(90deg, rgba(91, 34, 56, 0.5) 0%, rgba(91, 34, 56, 0.85) 50%, rgba(91, 34, 56, 0.5) 100%);
+		background: linear-gradient(90deg, rgba(91, 34, 56, 0.5) 0%, rgba(91, 34, 56, 0.85) 50%, rgba(91, 34, 56, 0.5) 100%);
 		border-radius: 4px;
 		box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06);
 	}
@@ -655,11 +764,10 @@
 		line-height: 1.7;
 	}
 
-	/* mobile */
 	@media (max-width: 640px) {
-		.book { --w: min(82vw, 320px); }
+		.book { --w: min(86vw, 340px); }
 		.cover-title { font-size: 28px; }
-		.page-content { padding: 22px 20px; }
+		.page-content { padding: 18px 18px; }
 	}
 
 	@media (prefers-reduced-motion: reduce) {

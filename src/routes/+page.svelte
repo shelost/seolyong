@@ -3,7 +3,11 @@
 
 	let { data } = $props();
 
-	type Post = { slug: string; frontmatter: { title: string; date: string; excerpt?: string } };
+	type Post = {
+		slug: string;
+		frontmatter: { title: string; date: string; excerpt?: string };
+		content: string;
+	};
 	const posts = $derived(data.posts as Post[]);
 </script>
 

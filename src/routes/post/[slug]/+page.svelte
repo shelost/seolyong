@@ -6,7 +6,8 @@
 
 	function fmt(d: string) {
 		if (!d) return '';
-		const dt = new Date(d);
+		const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d);
+		const dt = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(d);
 		if (Number.isNaN(dt.getTime())) return d;
 		return dt.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 	}

@@ -20,7 +20,6 @@ function slugFromFilename(filename: string) {
 }
 
 function parseFrontmatter(raw: string): { frontmatter: Record<string, string>; body: string } {
-	// Very small frontmatter parser: expects ---\nkey: value\n---\n
 	if (!raw.startsWith('---')) {
 		return { frontmatter: {}, body: raw };
 	}
@@ -43,39 +42,12 @@ function parseFrontmatter(raw: string): { frontmatter: Record<string, string>; b
 	return { frontmatter: fm, body };
 }
 
-export async function listPosts(): Promise<Array<Omit<Post, 'content'>>> {
-	const entries = await fs.readdir(POSTS_DIR);
-	const md = entries.filter((f) => f.endsWith('.md'));
-
-	const posts = await Promise.all(
-		md.map(async (filename) => {
-			const raw = await fs.readFile(path.join(POSTS_DIR, filename), 'utf8');
-			const { frontmatter } = parseFrontmatter(raw);
-			return {
-				slug: slugFromFilename(filename),
-				frontmatter: {
-					title: frontmatter.title ?? slugFromFilename(filename),
-					date: frontmatter.date ?? '',
-					excerpt: frontmatter.excerpt
-				}
-			};
-		})
-	);
-
-	posts.sort((a, b) => (a.frontmatter.date < b.frontmatter.date ? 1 : -1));
-	return posts;
-}
-
-export async function getPost(slug: string): Promise<Post> {
-	const filename = slug.endsWith('.md') ? slug : `${slug}.md`;
-	const full = path.join(POSTS_DIR, filename);
-	const raw = await fs.readFile(full, 'utf8');
+function readPostFile(filename: string, raw: string): Post {
 	const { frontmatter, body } = parseFrontmatter(raw);
-
 	return {
 		slug: slugFromFilename(filename),
 		frontmatter: {
-			title: frontmatter.title ?? slug,
+			title: frontmatter.title ?? slugFromFilename(filename),
 			date: frontmatter.date ?? '',
 			excerpt: frontmatter.excerpt
 		},
@@ -83,20 +55,85 @@ export async function getPost(slug: string): Promise<Post> {
 	};
 }
 
+function sortNewestFirst(a: Post, b: Post) {
+	if (a.frontmatter.date !== b.frontmatter.date) {
+		return a.frontmatter.date < b.frontmatter.date ? 1 : -1;
+	}
+	return a.slug < b.slug ? 1 : -1;
+}
+
+export function formatDateLong(date: string): string {
+	// Parse as local date (avoid UTC shift on ISO strings like "2026-04-25")
+	const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(date);
+	const dt = m
+		? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+		: new Date(date);
+	if (Number.isNaN(dt.getTime())) return date;
+	return dt.toLocaleDateString('en-US', {
+		month: 'long',
+		day: 'numeric',
+		year: 'numeric'
+	});
+}
+
+async function listSlugs(): Promise<Set<string>> {
+	const entries = await fs.readdir(POSTS_DIR);
+	return new Set(entries.filter((f) => f.endsWith('.md')).map(slugFromFilename));
+}
+
+export async function uniqueSlugForDate(date: string, existingSlug?: string): Promise<string> {
+	const slugs = await listSlugs();
+	if (existingSlug && slugs.has(existingSlug)) return existingSlug;
+	const base = date;
+	if (!slugs.has(base)) return base;
+	let i = 2;
+	while (slugs.has(`${base}-${i}`)) i++;
+	return `${base}-${i}`;
+}
+
+export async function listPosts(): Promise<Post[]> {
+	const entries = await fs.readdir(POSTS_DIR);
+	const md = entries.filter((f) => f.endsWith('.md'));
+
+	const posts = await Promise.all(
+		md.map(async (filename) => {
+			const raw = await fs.readFile(path.join(POSTS_DIR, filename), 'utf8');
+			return readPostFile(filename, raw);
+		})
+	);
+
+	posts.sort(sortNewestFirst);
+	return posts;
+}
+
+export async function getPost(slug: string): Promise<Post> {
+	const filename = slug.endsWith('.md') ? slug : `${slug}.md`;
+	const full = path.join(POSTS_DIR, filename);
+	const raw = await fs.readFile(full, 'utf8');
+	return readPostFile(filename, raw);
+}
+
+export async function deletePost(slug: string): Promise<void> {
+	const filename = slug.endsWith('.md') ? slug : `${slug}.md`;
+	const full = path.join(POSTS_DIR, filename);
+	await fs.unlink(full);
+}
+
 export async function upsertPost(opts: {
 	slug: string;
-	title: string;
+	title?: string;
 	date: string;
 	excerpt?: string;
 	content: string;
 }): Promise<void> {
 	const safeSlug = opts.slug.replace(/[^a-zA-Z0-9-_]/g, '-');
 	const full = path.join(POSTS_DIR, `${safeSlug}.md`);
+	const title = (opts.title && opts.title.trim()) || formatDateLong(opts.date);
 	const fm = [
 		'---',
-		`title: "${opts.title.replace(/\"/g, '')}"`,
+		`title: "${title.replace(/"/g, '')}"`,
 		`date: "${opts.date}"`,
-		opts.excerpt ? `excerpt: "${opts.excerpt.replace(/\"/g, '')}"` : null,
+		opts.excerpt ? `excerpt: "${opts.excerpt.replace(/"/g, '')}"` : null,
 		'---',
 		''
 	]
