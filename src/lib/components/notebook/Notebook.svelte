@@ -39,8 +39,12 @@
 
 	function flipPrev() {
 		if (flipping !== 'none' || activeIndex <= 0) return;
-		flipFromIndex = activeIndex;
-		flipFromPost = posts[activeIndex];
+		// For backward turns, the page that physically animates is the page
+		// that was sitting on the LEFT of the spread — i.e. the destination
+		// entry. It lifts off the left and swings around the spine onto the
+		// right. So flipFromPost is the *previous* post, not the active one.
+		flipFromIndex = activeIndex - 1;
+		flipFromPost = posts[activeIndex - 1];
 		flipping = 'prev';
 		activeIndex -= 1;
 		setTimeout(() => {
@@ -89,12 +93,51 @@
 			: ''
 	);
 
+	// The page that sits on the LEFT side of the open book once the user has
+	// turned at least one entry. This is a real, fully-rendered page (not a
+	// simulated white panel), so its colors and styling match the right page
+	// exactly. At index 0 there is no previous, and the cover-back is shown
+	// instead.
+	const previous = $derived(activeIndex > 0 ? posts[activeIndex - 1] : null);
+	const previousParagraphs = $derived(previous ? paragraphs(previous.content) : []);
+	const previousDate = $derived(previous ? fmt(previous.frontmatter.date) : '');
+	const previousSubtitle = $derived(
+		previous && previous.frontmatter.title && previous.frontmatter.title !== previousDate
+			? previous.frontmatter.title
+			: ''
+	);
+
 	function onCoverKey(e: KeyboardEvent) {
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
 			open();
 		}
 	}
+
+	// Close when the user clicks anywhere outside the book.
+	// Mounted only while opened. Defer attachment one tick so the same click
+	// that opened the cover doesn't immediately close it.
+	$effect(() => {
+		if (!opened) return;
+		if (typeof document === 'undefined') return;
+
+		let attached = false;
+		const onDocPointer = (e: PointerEvent) => {
+			const target = e.target as Element | null;
+			if (!target) return;
+			if (target.closest('.book')) return;
+			close();
+		};
+		const id = window.setTimeout(() => {
+			document.addEventListener('pointerdown', onDocPointer);
+			attached = true;
+		}, 0);
+
+		return () => {
+			window.clearTimeout(id);
+			if (attached) document.removeEventListener('pointerdown', onDocPointer);
+		};
+	});
 
 	// Click-to-flip: left half of page → prev, right half → next.
 	let downX = 0;
@@ -128,6 +171,21 @@
 		if (isLeft) flipPrev();
 		else flipNext();
 	}
+
+	// Click anywhere on the left (turned) page → go back one entry. Same
+	// quiet-click guards as the right page so text selection / button clicks
+	// inside the page don't trigger a flip.
+	function onLeftPageUp(e: PointerEvent) {
+		if (e.button !== 0) return;
+		if (!opened || flipping !== 'none') return;
+		if (isInteractive(downTarget) || isInteractive(e.target)) return;
+		const dx = Math.abs(e.clientX - downX);
+		const dy = Math.abs(e.clientY - downY);
+		if (dx > 6 || dy > 6) return;
+		const sel = typeof window !== 'undefined' ? window.getSelection() : null;
+		if (sel && sel.toString().length > 0) return;
+		flipPrev();
+	}
 </script>
 
 <div class="stage">
@@ -138,10 +196,43 @@
 	</div>
 
 	<div class="book-perspective">
-		<div class="book" class:opened class:flipping-active={flipping !== 'none'}>
+		<div class="book-float" class:opened>
+		<div
+			class="book"
+			class:opened
+			class:flipping-active={flipping !== 'none'}
+		>
 			<div class="back-cover"></div>
 
 			<div class="page-edge"></div>
+
+			<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+			<div
+				class="left-page"
+				class:visible={opened && activeIndex > 0 && flipping === 'none'}
+				onpointerdown={onPageDown}
+				onpointerup={onLeftPageUp}
+				aria-label="previous entry"
+			>
+				{#if previous}
+					<div class="page-content">
+						<div class="meta">
+							<span class="pageno">No. {String(activeIndex).padStart(2, '0')}</span>
+							{#if previousSubtitle}
+								<span class="subtitle">{previousSubtitle}</span>
+							{/if}
+						</div>
+						<h1>{previousDate}</h1>
+						<div class="scroll no-scroll">
+							<div class="body">
+								{#each previousParagraphs as para}
+									<p>{para}</p>
+								{/each}
+							</div>
+						</div>
+					</div>
+				{/if}
+			</div>
 
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
@@ -241,8 +332,8 @@
 					<div class="cover-frame">
 						<div class="ornament">— ✦ —</div>
 						<div class="cover-title-block">
-							<div class="cover-title">seolyong</div>
-							<div class="cover-sub">매일 묵상 · daily devotions</div>
+							<div class="cover-title">daily devotions</div>
+							<div class="cover-author">김설용</div>
 						</div>
 						<div class="ornament">— ✿ —</div>
 					</div>
@@ -260,6 +351,7 @@
 					</div>
 				</div>
 			</div>
+		</div>
 		</div>
 	</div>
 
@@ -338,6 +430,24 @@
 		perspective-origin: 50% 38%;
 	}
 
+	/* Floating idle animation lives on a wrapper so it never fights the
+	   rotation/hover transforms on .book. This is the key to a buttery hover:
+	   pausing this wrapper on hover/open avoids any snap-back from the
+	   keyframed translateY. */
+	.book-float {
+		transform-style: preserve-3d;
+		animation: bookFloat 6.5s ease-in-out infinite;
+		will-change: transform;
+	}
+	.book-float:hover,
+	.book-float.opened {
+		animation-play-state: paused;
+	}
+	@keyframes bookFloat {
+		0%, 100% { transform: translate3d(0, 0, 0); }
+		50% { transform: translate3d(0, -7px, 0); }
+	}
+
 	.book {
 		--w: clamp(320px, 36vw, 460px);
 		--h: calc(var(--w) * 1.36);
@@ -346,22 +456,16 @@
 		width: var(--w);
 		height: var(--h);
 		transform-style: preserve-3d;
-		transform: rotateX(8deg) rotateY(-14deg) translateZ(0);
-		transition: transform 1.15s cubic-bezier(0.7, 0, 0.2, 1);
+		transform: rotateX(8deg) rotateY(-14deg);
+		transition: transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
 		will-change: transform;
-		animation: float 6.5s ease-in-out infinite;
 	}
 	.book.opened {
 		transform: rotateX(22deg) rotateY(-2deg) translateZ(40px) translateY(-12px);
-		animation: none;
+		transition: transform 1.1s cubic-bezier(0.65, 0, 0.2, 1);
 	}
-	.book:not(.opened):hover {
-		transform: rotateX(6deg) rotateY(-10deg) translateY(-8px);
-		animation: none;
-	}
-	@keyframes float {
-		0%, 100% { transform: rotateX(8deg) rotateY(-14deg) translateY(0); }
-		50% { transform: rotateX(8deg) rotateY(-14deg) translateY(-7px); }
+	.book-float:hover .book:not(.opened) {
+		transform: rotateX(6deg) rotateY(-10deg) translateY(-6px);
 	}
 
 	.back-cover {
@@ -409,6 +513,38 @@
 	}
 	.page.visible { opacity: 1; }
 	.page.hoverable { cursor: pointer; }
+
+	/* The real "turned" page on the left side of the open book.
+	   Same gradient + inset glow as .page so the colors match exactly.
+	   - translateX(-100%) puts it to the left of the spine.
+	   - translateZ(2px) lifts it just in front of the open cover so it
+	     reliably renders on top in 3D (preserve-3d uses real depth).
+	   - Mirrored inset shadow on the right edge (where its spine is). */
+	.left-page {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		border-radius: 4px;
+		background:
+			linear-gradient(180deg, rgba(255, 255, 255, 0.6) 0%, transparent 8%),
+			linear-gradient(180deg, var(--cream) 0%, var(--cream-edge) 100%);
+		box-shadow:
+			inset 0 0 60px rgba(202, 122, 147, 0.1),
+			inset -8px 0 16px -8px rgba(168, 90, 118, 0.25);
+		overflow: hidden;
+		transform: translate3d(-100%, 0, 2px);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.4s ease;
+		z-index: 7;
+	}
+	.left-page.visible {
+		opacity: 1;
+		pointer-events: auto;
+		cursor: pointer;
+	}
 
 	.page-content {
 		position: relative;
@@ -575,8 +711,14 @@
 		transform-origin: left center;
 		animation: flipNext 0.76s cubic-bezier(0.55, 0, 0.35, 1) forwards;
 	}
+	/* Backward turn: the page that animates is the one that was sitting on
+	   the LEFT side of the spread. We shift the .flipping-page over to the
+	   left half via translateX(-100%) so its right edge (the spine) becomes
+	   the rotation pivot. The keyframe must include the same translate as
+	   the static rule so it isn't clobbered. */
 	.flipping-page.prev {
 		transform-origin: right center;
+		transform: translateX(-100%);
 		animation: flipPrev 0.76s cubic-bezier(0.55, 0, 0.35, 1) forwards;
 	}
 	@keyframes flipNext {
@@ -584,8 +726,8 @@
 		to { transform: rotateY(-178deg); }
 	}
 	@keyframes flipPrev {
-		from { transform: rotateY(0); }
-		to { transform: rotateY(178deg); }
+		from { transform: translateX(-100%) rotateY(0); }
+		to { transform: translateX(-100%) rotateY(178deg); }
 	}
 
 	.flip-side {
@@ -697,23 +839,26 @@
 
 	.cover-title-block {
 		display: grid;
-		gap: 8px;
+		gap: 10px;
 		align-content: center;
+		justify-items: center;
 	}
 	.cover-title {
 		font-family: 'Cormorant Garamond', ui-serif, Georgia, serif;
 		font-weight: 500;
-		font-size: clamp(30px, 3.6vw, 46px);
-		letter-spacing: 0.05em;
-		text-shadow: 0 2px 0 rgba(168, 90, 118, 0.4);
-	}
-	.cover-sub {
-		font-style: italic;
-		opacity: 0.92;
-		letter-spacing: 0.16em;
-		font-size: 12px;
+		font-size: clamp(26px, 3.2vw, 40px);
+		letter-spacing: -1.5px;
 		text-transform: lowercase;
-		font-family: ui-serif, Georgia, serif;
+		text-shadow: 0 2px 0 rgba(168, 90, 118, 0.4);
+		line-height: 1.05;
+	}
+	.cover-author {
+		font-family: 'Cormorant Garamond', ui-serif, Georgia, serif;
+		font-weight: 400;
+		font-size: clamp(13px, 1.2vw, 16px);
+		letter-spacing: 0.32em;
+		opacity: 0.88;
+		color: #fff;
 	}
 
 	.cover-elastic {

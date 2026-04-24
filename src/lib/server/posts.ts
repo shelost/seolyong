@@ -1,5 +1,4 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { dev } from '$app/environment';
 
 export type PostFrontmatter = {
 	title: string;
@@ -13,7 +12,19 @@ export type Post = {
 	content: string;
 };
 
-const POSTS_DIR = path.resolve('src/lib/content/posts');
+// Bundle every markdown file under src/lib/content/posts at build time.
+// This makes posts available in serverless environments (Vercel, etc.)
+// without touching the filesystem at runtime.
+const rawPosts = import.meta.glob('/src/lib/content/posts/*.md', {
+	query: '?raw',
+	import: 'default',
+	eager: true
+}) as Record<string, string>;
+
+function slugFromPath(filepath: string) {
+	const filename = filepath.split('/').pop() ?? filepath;
+	return filename.replace(/\.md$/, '');
+}
 
 function slugFromFilename(filename: string) {
 	return filename.replace(/\.md$/, '');
@@ -42,12 +53,12 @@ function parseFrontmatter(raw: string): { frontmatter: Record<string, string>; b
 	return { frontmatter: fm, body };
 }
 
-function readPostFile(filename: string, raw: string): Post {
+function buildPost(slug: string, raw: string): Post {
 	const { frontmatter, body } = parseFrontmatter(raw);
 	return {
-		slug: slugFromFilename(filename),
+		slug,
 		frontmatter: {
-			title: frontmatter.title ?? slugFromFilename(filename),
+			title: frontmatter.title ?? slug,
 			date: frontmatter.date ?? '',
 			excerpt: frontmatter.excerpt
 		},
@@ -76,13 +87,32 @@ export function formatDateLong(date: string): string {
 	});
 }
 
-async function listSlugs(): Promise<Set<string>> {
-	const entries = await fs.readdir(POSTS_DIR);
-	return new Set(entries.filter((f) => f.endsWith('.md')).map(slugFromFilename));
+function getBundledPosts(): Map<string, Post> {
+	const map = new Map<string, Post>();
+	for (const [filepath, raw] of Object.entries(rawPosts)) {
+		const slug = slugFromPath(filepath);
+		map.set(slug, buildPost(slug, raw));
+	}
+	return map;
+}
+
+export async function listPosts(): Promise<Post[]> {
+	const posts = Array.from(getBundledPosts().values());
+	posts.sort(sortNewestFirst);
+	return posts;
+}
+
+export async function getPost(slug: string): Promise<Post> {
+	const cleanSlug = slug.endsWith('.md') ? slug.replace(/\.md$/, '') : slug;
+	const post = getBundledPosts().get(cleanSlug);
+	if (!post) {
+		throw new Error(`Post not found: ${cleanSlug}`);
+	}
+	return post;
 }
 
 export async function uniqueSlugForDate(date: string, existingSlug?: string): Promise<string> {
-	const slugs = await listSlugs();
+	const slugs = new Set(getBundledPosts().keys());
 	if (existingSlug && slugs.has(existingSlug)) return existingSlug;
 	const base = date;
 	if (!slugs.has(base)) return base;
@@ -91,32 +121,36 @@ export async function uniqueSlugForDate(date: string, existingSlug?: string): Pr
 	return `${base}-${i}`;
 }
 
-export async function listPosts(): Promise<Post[]> {
-	const entries = await fs.readdir(POSTS_DIR);
-	const md = entries.filter((f) => f.endsWith('.md'));
+// ---------------------------------------------------------------------------
+// Write operations
+//
+// Vercel serverless functions have a read-only filesystem (outside /tmp), so
+// these only work in local `dev`. In production they no-op with a clear error
+// instead of crashing the process. If you want editing in prod, move posts to
+// a database (Supabase, etc.) and swap these implementations.
+// ---------------------------------------------------------------------------
 
-	const posts = await Promise.all(
-		md.map(async (filename) => {
-			const raw = await fs.readFile(path.join(POSTS_DIR, filename), 'utf8');
-			return readPostFile(filename, raw);
-		})
-	);
-
-	posts.sort(sortNewestFirst);
-	return posts;
+async function writeFsPost(filename: string, contents: string): Promise<void> {
+	const fs = await import('node:fs/promises');
+	const path = await import('node:path');
+	const dir = path.resolve('src/lib/content/posts');
+	await fs.mkdir(dir, { recursive: true });
+	await fs.writeFile(path.join(dir, filename), contents, 'utf8');
 }
 
-export async function getPost(slug: string): Promise<Post> {
-	const filename = slug.endsWith('.md') ? slug : `${slug}.md`;
-	const full = path.join(POSTS_DIR, filename);
-	const raw = await fs.readFile(full, 'utf8');
-	return readPostFile(filename, raw);
+async function unlinkFsPost(filename: string): Promise<void> {
+	const fs = await import('node:fs/promises');
+	const path = await import('node:path');
+	const dir = path.resolve('src/lib/content/posts');
+	await fs.unlink(path.join(dir, filename));
 }
 
 export async function deletePost(slug: string): Promise<void> {
+	if (!dev) {
+		throw new Error('deletePost is only available in development.');
+	}
 	const filename = slug.endsWith('.md') ? slug : `${slug}.md`;
-	const full = path.join(POSTS_DIR, filename);
-	await fs.unlink(full);
+	await unlinkFsPost(filename);
 }
 
 export async function upsertPost(opts: {
@@ -126,8 +160,10 @@ export async function upsertPost(opts: {
 	excerpt?: string;
 	content: string;
 }): Promise<void> {
+	if (!dev) {
+		throw new Error('upsertPost is only available in development.');
+	}
 	const safeSlug = opts.slug.replace(/[^a-zA-Z0-9-_]/g, '-');
-	const full = path.join(POSTS_DIR, `${safeSlug}.md`);
 	const title = (opts.title && opts.title.trim()) || formatDateLong(opts.date);
 	const fm = [
 		'---',
@@ -140,5 +176,8 @@ export async function upsertPost(opts: {
 		.filter(Boolean)
 		.join('\n');
 
-	await fs.writeFile(full, fm + opts.content.trimStart(), 'utf8');
+	await writeFsPost(`${safeSlug}.md`, fm + opts.content.trimStart());
 }
+
+// Re-export for callers that still import this name.
+export { slugFromFilename };
