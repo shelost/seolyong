@@ -42,7 +42,7 @@
 	}
 
 	.bg {
-		min-height: 100vh;
+		min-height: 100dvh;
 		background:
 			radial-gradient(900px 600px at 50% 20%, #fef0f4 0%, #fbe2ea 55%, #f4cdda 100%),
 			linear-gradient(180deg, #fff5f8 0%, #f9d8e4 100%);

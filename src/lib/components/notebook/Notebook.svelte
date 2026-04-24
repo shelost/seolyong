@@ -261,21 +261,43 @@
 							</div>
 						</div>
 
-						<div class="page-actions">
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<div
+							class="page-actions"
+							data-no-flip
+							onpointerdown={stopAll}
+							onpointerup={stopAll}
+							onclick={stopAll}
+						>
 							<button
 								type="button"
 								class="nav"
-								onclick={flipPrev}
+								onclick={(e) => {
+									e.stopPropagation();
+									flipPrev();
+								}}
 								disabled={activeIndex === 0 || flipping !== 'none'}
 								aria-label="previous entry"
 							>
 								← prev
 							</button>
-							<button type="button" class="close" onclick={close}>✕ close</button>
+							<button
+								type="button"
+								class="close"
+								onclick={(e) => {
+									e.stopPropagation();
+									close();
+								}}
+							>
+								✕ close
+							</button>
 							<button
 								type="button"
 								class="nav"
-								onclick={flipNext}
+								onclick={(e) => {
+									e.stopPropagation();
+									flipNext();
+								}}
 								disabled={activeIndex === posts.length - 1 || flipping !== 'none'}
 								aria-label="next entry"
 							>
@@ -375,7 +397,7 @@
 
 		position: relative;
 		width: 100%;
-		min-height: 100vh;
+		min-height: 100dvh;
 		display: grid;
 		place-items: center;
 		background:
@@ -406,7 +428,7 @@
 	}
 	@keyframes drift {
 		0% { transform: translate3d(0, -40px, 0) rotate(0deg); }
-		100% { transform: translate3d(40px, 110vh, 0) rotate(360deg); }
+		100% { transform: translate3d(40px, 110dvh, 0) rotate(360deg); }
 	}
 
 	.hint {

@@ -31,12 +31,12 @@
 		margin: 0;
 		padding: 0;
 		background: #fbe2ea;
-		min-height: 100vh;
+		min-height: 100dvh;
 		overscroll-behavior: none;
 	}
 	main {
 		display: block;
 		width: 100%;
-		min-height: 100vh;
+		min-height: 100dvh;
 	}
 </style>

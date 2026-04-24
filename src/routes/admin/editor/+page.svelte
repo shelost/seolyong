@@ -336,7 +336,7 @@
 	}
 
 	.wrap {
-		min-height: 100vh;
+		min-height: 100dvh;
 		background:
 			radial-gradient(900px 600px at 50% 30%, #fef0f4 0%, #fbe2ea 55%, #f4cdda 100%),
 			linear-gradient(180deg, #fff5f8 0%, #f9d8e4 100%);
@@ -430,7 +430,7 @@
 		box-shadow:
 			0 16px 40px -16px rgba(168, 90, 118, 0.35),
 			0 4px 10px rgba(168, 90, 118, 0.12);
-		max-height: 60vh;
+		max-height: 60dvh;
 		overflow-y: auto;
 		scrollbar-width: thin;
 		scrollbar-color: rgba(168, 90, 118, 0.4) transparent;
@@ -448,7 +448,7 @@
 		display: grid;
 		grid-template-columns: 280px minmax(0, 1fr);
 		gap: 18px;
-		min-height: calc(100vh - 90px);
+		min-height: calc(100dvh - 90px);
 	}
 
 	.sidebar {
@@ -458,7 +458,7 @@
 		box-shadow:
 			0 16px 40px -16px rgba(168, 90, 118, 0.35),
 			0 4px 10px rgba(168, 90, 118, 0.12);
-		max-height: calc(100vh - 90px);
+		max-height: calc(100dvh - 90px);
 		overflow-y: auto;
 		overflow-x: hidden;
 		scrollbar-width: thin;
@@ -863,7 +863,7 @@
 		}
 		.grid {
 			grid-template-columns: minmax(0, 1fr);
-			min-height: calc(100vh - 110px);
+			min-height: calc(100dvh - 110px);
 		}
 		.sidebar {
 			display: none;
